@@ -143,9 +143,7 @@ async function fetchKmbEtasForStop(stop) {
     keys.map((rt) => () => fetchKmbEta(rt.stop, rt.route, rt.service_type)),
     10
   );
-  return keys
-    .map((rt, i) => ({ rt, eta: results[i] || [] }))
-    .filter((x) => x.eta.length > 0);
+  return keys.map((rt, i) => ({ rt, eta: results[i] || [] }));
 }
 
 async function fetchCitybusEtasForStop(stop) {
@@ -163,9 +161,7 @@ async function fetchCitybusEtasForStop(stop) {
     keys.map((rt) => () => fetchCitybusEta(rt.stop, rt.route)),
     10
   );
-  return keys
-    .map((rt, i) => ({ rt, eta: results[i] || [] }))
-    .filter((x) => x.eta.length > 0);
+  return keys.map((rt, i) => ({ rt, eta: results[i] || [] }));
 }
 
 /** 把 ETA 陣列整理成 {dest, mins} 列（依 dir+dest 取下一班，按時間排序） */
@@ -183,6 +179,18 @@ function summarizeEta(etaArray) {
   }
   rows.sort((a, b) => a.mins - b.mins);
   return rows.slice(0, MAX_BUS_ROWS);
+}
+
+/** 依 dir 分組 ETA（總站同一站柱會回傳雙方向），保留出現順序 */
+function groupByDir(eta, fallbackDir) {
+  const order = [];
+  const map = new Map();
+  for (const e of eta) {
+    const d = e.dir || fallbackDir || "";
+    if (!map.has(d)) { map.set(d, []); order.push(d); }
+    map.get(d).push(e);
+  }
+  return order.map((d) => ({ dir: d, entries: map.get(d) }));
 }
 
 // ---------- 屯門公路轉車站轉乘 ----------
@@ -269,7 +277,7 @@ function addTransferToggle(group, route, bound, etaEntries) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "transfer-toggle";
-  btn.textContent = "🚏 轉乘";
+  btn.textContent = "🚏 屯門公路轉車站轉乘";
 
   const box = document.createElement("div");
   box.className = "transfer-list hidden";
@@ -282,7 +290,7 @@ function addTransferToggle(group, route, bound, etaEntries) {
   btn.addEventListener("click", () => {
     if (opened) {
       box.classList.add("hidden");
-      btn.textContent = "🚏 轉乘";
+      btn.textContent = "🚏 屯門公路轉車站轉乘";
       opened = false;
       return;
     }
@@ -462,34 +470,63 @@ function renderBusStops(items, mode, listElId, sectionElId) {
       .then((routeResults) => {
         etaBox.innerHTML = "";
         let rowCount = 0;
+        const dead = []; // 尾班車已過／無班次的路線（灰字列出）
+
+        outer:
         for (const { rt, eta } of routeResults) {
-          const rows = summarizeEta(eta);
-          if (!rows.length) continue;
-
-          const group = document.createElement("div");
-          group.className = "route-group";
-          let added = 0;
-          for (const r of rows) {
-            if (rowCount >= MAX_BUS_ROWS) break;
-            rowCount++;
-            added++;
-            const row = document.createElement("div");
-            row.className = "eta-row";
-            row.innerHTML = `
-              <span class="route-badge ${badgeClass}">${esc(rt.route)}</span>
-              <span class="eta-dest">往 ${esc(r.dest)}</span>
-              <span class="eta-time ${timeClass(r.mins)}">${timeText(r.mins)}</span>`;
-            group.appendChild(row);
+          // 完全冇 ETA 資料（含抓取失敗）→ 用 route 條目兜底
+          if (!eta.length) {
+            dead.push({ route: rt.route, dest: rt.dest_tc || rt.dest_en || "" });
+            continue;
           }
-          if (added === 0) break; // 已達每站列數上限
-          etaBox.appendChild(group);
+          // 同一站柱可能回傳雙方向（總站），依 dir 分組逐方向處理
+          for (const d of groupByDir(eta, rt.bound || rt.dir)) {
+            const rows = summarizeEta(d.entries);
+            if (!rows.length) {
+              const first = d.entries.find((e) => e.dest_tc || e.dest_en);
+              dead.push({
+                route: rt.route,
+                dest: (first && (first.dest_tc || first.dest_en)) || rt.dest_tc || rt.dest_en || "",
+              });
+              continue;
+            }
+            const group = document.createElement("div");
+            group.className = "route-group";
+            let added = 0;
+            for (const r of rows) {
+              if (rowCount >= MAX_BUS_ROWS) break;
+              rowCount++;
+              added++;
+              const row = document.createElement("div");
+              row.className = "eta-row";
+              row.innerHTML = `
+                <span class="route-badge ${badgeClass}">${esc(rt.route)}</span>
+                <span class="eta-dest">往 ${esc(r.dest)}</span>
+                <span class="eta-time ${timeClass(r.mins)}">${timeText(r.mins)}</span>`;
+              group.appendChild(row);
+            }
+            if (added === 0) break outer; // 已達每站列數上限
+            etaBox.appendChild(group);
 
-          // 九巴路線若經屯門公路轉車站且轉車站在下游（尚未經過），附轉乘按鈕
-          if (mode === "kmb" && transferAhead(rt.route, rt.bound, eta)) {
-            addTransferToggle(group, rt.route, rt.bound, eta);
+            // 九巴路線若經屯門公路轉車站且轉車站在下游（尚未經過），附轉乘按鈕
+            if (mode === "kmb" && transferAhead(rt.route, d.dir, d.entries)) {
+              addTransferToggle(group, rt.route, d.dir, d.entries);
+            }
           }
         }
-        if (!rowCount) {
+
+        // 尾班車已過／無班次路線，灰字列出
+        for (const d of dead) {
+          const row = document.createElement("div");
+          row.className = "eta-row closed";
+          row.innerHTML = `
+            <span class="route-badge ${badgeClass}">${esc(d.route)}</span>
+            ${d.dest ? `<span class="eta-dest">往 ${esc(d.dest)}</span>` : ""}
+            <span class="wait-closed">已收車／暫無班次</span>`;
+          etaBox.appendChild(row);
+        }
+
+        if (!rowCount && !dead.length) {
           etaBox.innerHTML = '<div class="card-sub">暫無班次或路線未營運</div>';
         }
       })

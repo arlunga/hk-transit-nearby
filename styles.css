@@ -90,6 +90,7 @@ main { max-width: 680px; margin: 12px auto 40px; padding: 0 20px; }
 
 .eta-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .eta-row { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.eta-row.closed { opacity: 0.55; }
 
 .route-badge {
   display: inline-block; min-width: 42px; text-align: center; padding: 2px 6px;
