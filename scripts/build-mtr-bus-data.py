@@ -28,7 +28,7 @@ import urllib.request
 
 ROUTES_URL = "https://opendata.mtr.com.hk/data/mtr_bus_routes.csv"
 STOPS_URL = "https://opendata.mtr.com.hk/data/mtr_bus_stops.csv"
-MERGE_M = 50  # 合併距離（公尺）
+MERGE_M = 100  # 合併距離（公尺）：同一實體站去回程常在馬路兩側（>50m），同名站合併
 
 
 def get(url):

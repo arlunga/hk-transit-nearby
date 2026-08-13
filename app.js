@@ -1,4 +1,4 @@
-import { loadStaticData, buildMtrCodeMap } from "./src/lib/data.js";
+import { loadStaticData, buildMtrCodeMap, buildRouteStops } from "./src/lib/data.js";
 import { findNearest, formatDistance } from "./src/lib/geo.js";
 import { getSetting, setSetting, removeSetting } from "./src/lib/store.js";
 import {
@@ -25,6 +25,7 @@ const MTR_MIN_RADIUS = 1500; // 港鐵站較稀疏，用較大範圍
 const state = {
   data: null,        // {mtr, kmb, citybus, gmb, mtrBus, tmr}
   mtrCodeMap: null,  // code -> 中文站名
+  routeStops: null,  // {kmb, ctb, gmb, mtrbus} -> "route|dir" -> [停站名]
   location: null,    // {lat, lon, label}
   locationError: null, // 定位失敗時的人話提示
   radius: 600,
@@ -112,6 +113,7 @@ async function loadData(force = false) {
   setStatus("載入站點資料…");
   state.data = await loadStaticData(force);
   state.mtrCodeMap = buildMtrCodeMap(state.data.mtr);
+  state.routeStops = buildRouteStops(state.data);
 }
 
 // ---------- 計算附近站點 ----------
@@ -203,7 +205,7 @@ async function fetchGmbEtasForStop(stop) {
     for (const eta of e.eta || []) {
       const mins = gmbMinutes(eta);
       if (mins === null) continue;
-      rows.push({ route: info.route, dest: info.dest_tc || "", mins });
+      rows.push({ route: info.route, dir: info.dir, dest: info.dest_tc || "", mins });
     }
   }
   return groupMinibusRows(rows);
@@ -227,7 +229,7 @@ async function fetchMtrBusEtasForStop(stop) {
       // 108000 秒（30 小時）＝尾班已過／無資料；不顯示
       if (Number.isNaN(sec) || sec < 0 || sec >= 108000) continue;
       const dest = lineRefs[bus.lineRef] || r.dest_tc || "";
-      rows.push({ route: r.route, dest, mins: Math.round(sec / 60) });
+      rows.push({ route: r.route, dir: r.dir, dest, mins: Math.round(sec / 60) });
     }
   }
   return groupMinibusRows(rows);
@@ -419,6 +421,50 @@ function renderTransferList(box, res) {
   }
 }
 
+/** 為某路線加「🗺️ 路線」按鈕，點擊展開完整途經站（純靜態，無 API 呼叫） */
+function addRouteToggle(container, mode, key) {
+  const stops = state.routeStops?.[mode]?.[key];
+  if (!stops || !stops.length) return;
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "route-toggle";
+  btn.textContent = "🗺️ 路線";
+
+  const box = document.createElement("div");
+  box.className = "route-list hidden";
+
+  container.appendChild(btn);
+  container.appendChild(box);
+
+  let opened = false;
+  btn.addEventListener("click", () => {
+    opened = !opened;
+    if (opened) {
+      btn.textContent = "🗺️ 收起路線";
+      box.classList.remove("hidden");
+      renderRouteList(box, stops);
+    } else {
+      btn.textContent = "🗺️ 路線";
+      box.classList.add("hidden");
+    }
+  });
+}
+
+function renderRouteList(box, stops) {
+  box.innerHTML = "";
+  const ol = document.createElement("ol");
+  ol.className = "route-stop-list";
+  stops.forEach((name, i) => {
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <span class="route-stop-seq">${i + 1}</span>
+      <span class="route-stop-name">${esc(name)}</span>`;
+    ol.appendChild(li);
+  });
+  box.appendChild(ol);
+}
+
 async function fetchMtrForStation(station) {
   const lineResults = await asyncPool(
     station.lines.map((ln) => async () => ({ ln, data: await fetchMtrSchedule(ln, station.code) })),
@@ -565,6 +611,9 @@ function renderBusStops(items, mode, listElId, sectionElId) {
             if (added === 0) break outer; // 已達每站列數上限
             etaBox.appendChild(group);
 
+            // 顯示完整途經站
+            addRouteToggle(group, mode, `${rt.route}|${d.dir}`);
+
             // 九巴路線若經屯門公路轉車站且轉車站在下游（尚未經過），附轉乘按鈕
             if (mode === "kmb" && transferAhead(rt.route, d.dir, d.entries)) {
               addTransferToggle(group, rt.route, d.dir, d.entries);
@@ -615,13 +664,19 @@ function renderMinibusStops(items, mode, listElId, sectionElId, fetchFn) {
           return;
         }
         for (const r of rows) {
+          const group = document.createElement("div");
+          group.className = "route-group";
           const row = document.createElement("div");
           row.className = "eta-row";
           row.innerHTML = `
             <span class="route-badge ${badgeClass}">${esc(r.route)}</span>
             ${r.dest ? `<span class="eta-dest">往 ${esc(r.dest)}</span>` : ""}
             <span class="eta-time ${timeClass(r.mins)}">${timeText(r.mins)}</span>`;
-          etaBox.appendChild(row);
+          group.appendChild(row);
+          etaBox.appendChild(group);
+          if (r.dir !== undefined && r.dir !== null) {
+            addRouteToggle(group, mode, `${r.route}|${r.dir}`);
+          }
         }
       })
       .catch(() => {

@@ -19,6 +19,7 @@
 用法：python3 scripts/build-gmb-data.py
 """
 import json
+import math
 import sys
 import time
 import urllib.error
@@ -26,6 +27,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE = "https://data.etagmb.gov.hk"
+MERGE_M = 100  # 同名站合併距離（公尺）：同一實體站可能有重複 stop_id，或去回程在馬路兩側
 
 
 def get_json(url, tries=6):
@@ -45,6 +47,35 @@ def get_json(url, tries=6):
             last = e
             time.sleep(0.5)
     raise last
+
+
+def dist_m(a, b):
+    lat = math.radians((a["lat"] + b["lat"]) / 2)
+    dlat = (a["lat"] - b["lat"]) * 111320
+    dlon = (a["lon"] - b["lon"]) * 111320 * math.cos(lat)
+    return math.hypot(dlat, dlon)
+
+
+def merge_stops(raw):
+    """同名且距離 ≦ MERGE_M 的站合併為一個（同一實體站可能有重複 stop_id）。"""
+    merged = []
+    for s in sorted(raw, key=lambda x: x["name_tc"]):
+        placed = False
+        for c in merged:
+            if c["name_tc"] == s["name_tc"] and dist_m(c, s) <= MERGE_M:
+                c["routes"].extend(s["routes"])
+                placed = True
+                break
+        if not placed:
+            merged.append({
+                "id": s["id"],
+                "name_tc": s["name_tc"],
+                "name_en": s["name_en"],
+                "lat": s["lat"],
+                "lon": s["lon"],
+                "routes": list(s["routes"]),
+            })
+    return merged
 
 
 def main():
@@ -152,7 +183,7 @@ def main():
                 print(f"  座標 {i + 1}/{len(stop_ids)}")
 
     # 4) 組裝輸出
-    out = []
+    raw = []
     skipped = 0
     for sid, names in stop_names.items():
         if sid not in coords:
@@ -170,19 +201,35 @@ def main():
             seen.add(k)
             uniq.append(r)
         uniq.sort(key=lambda r: (r["route"], r["dir"], r["seq"]))
-        out.append({
+        raw.append({
             "id": sid,
             "name_tc": names["name_tc"],
             "name_en": names["name_en"],
-            "lat": round(lat, 6),
-            "lon": round(lon, 6),
+            "lat": lat,
+            "lon": lon,
             "routes": uniq,
         })
+
+    out = merge_stops(raw)
+    # 合併後再去重一次 + 定座標精度
+    for c in out:
+        seen = set()
+        uniq = []
+        for r in c["routes"]:
+            k = (r["route"], r["dir"], r["dest_tc"])
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append(r)
+        uniq.sort(key=lambda r: (r["route"], r["dir"], r["seq"]))
+        c["routes"] = uniq
+        c["lat"] = round(c["lat"], 6)
+        c["lon"] = round(c["lon"], 6)
     out.sort(key=lambda s: s["name_tc"])
 
     with open("src/data/gmb-stops.json", "w", encoding="utf-8") as f:
         json.dump({"stops": out}, f, ensure_ascii=False, separators=(",", ":"))
-    print(f"完成：{len(out)} 個站點（{skipped} 個缺座標略過）→ src/data/gmb-stops.json")
+    print(f"完成：{len(raw)} 個原始站 → 合併為 {len(out)} 個站（{skipped} 個缺座標略過）→ src/data/gmb-stops.json")
 
 
 if __name__ == "__main__":

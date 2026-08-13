@@ -58,3 +58,68 @@ export function buildMtrCodeMap(mtrStations) {
   }
   return map;
 }
+
+/**
+ * 建立「路線 × 方向 → 依序停站名」對照（供「🗺️ 路線」按鈕顯示完整途經站）。
+ * 直接從已載入的站點資料反轉，無需額外資料檔。
+ * @param {{kmb:Array, citybus:Array, gmb:Array, mtrBus:Object}} data
+ * @returns {{kmb:Object, ctb:Object, gmb:Object, mtrbus:Object}}
+ */
+export function buildRouteStops(data) {
+  // KMB：service_type 代表不同服務時段／特別班次（停站可能不同），
+  // 每個 (route, bound) 取「停站最多」的 service_type（主路線／最完整走線）。
+  const kmbGroups = new Map();
+  for (const s of data.kmb) {
+    for (const r of s.routes || []) {
+      const k = `${r.route}|${r.bound}|${r.service_type}`;
+      let arr = kmbGroups.get(k);
+      if (!arr) { arr = []; kmbGroups.set(k, arr); }
+      arr.push([r.seq || 0, s.name_tc]);
+    }
+  }
+  const kmbBest = new Map(); // route|bound -> [service_type, arr]
+  for (const [k, arr] of kmbGroups) {
+    const i = k.lastIndexOf("|");
+    const rk = k.slice(0, i);
+    const st = k.slice(i + 1);
+    const cur = kmbBest.get(rk);
+    if (
+      !cur ||
+      arr.length > cur[1].length ||
+      (arr.length === cur[1].length && +st < +cur[0])
+    ) {
+      kmbBest.set(rk, [st, arr]);
+    }
+  }
+  const kmb = {};
+  for (const [rk, [, arr]] of kmbBest) {
+    arr.sort((a, b) => a[0] - b[0]);
+    kmb[rk] = arr.map((x) => x[1]);
+  }
+
+  // 城巴／綠色小巴／港鐵巴士：依 (route, dir) 分組、依 seq 排序
+  const simple = (stops) => {
+    const groups = new Map();
+    for (const s of stops) {
+      for (const r of s.routes || []) {
+        const k = `${r.route}|${r.dir}`;
+        let arr = groups.get(k);
+        if (!arr) { arr = []; groups.set(k, arr); }
+        arr.push([r.seq || 0, s.name_tc]);
+      }
+    }
+    const out = {};
+    for (const [k, arr] of groups) {
+      arr.sort((a, b) => a[0] - b[0]);
+      out[k] = arr.map((x) => x[1]);
+    }
+    return out;
+  };
+
+  return {
+    kmb,
+    ctb: simple(data.citybus),
+    gmb: simple(data.gmb),
+    mtrbus: simple(data.mtrBus.stops),
+  };
+}
