@@ -5,6 +5,8 @@ import {
   fetchKmbEta,
   fetchCitybusEta,
   fetchMtrSchedule,
+  fetchGmbEta,
+  fetchMtrBusEta,
   asyncPool,
   minutesUntil,
 } from "./src/api/eta.js";
@@ -21,7 +23,7 @@ const REFRESH_MS = 30000;   // 自動更新週期
 const MTR_MIN_RADIUS = 1500; // 港鐵站較稀疏，用較大範圍
 
 const state = {
-  data: null,        // {mtr, kmb, citybus}
+  data: null,        // {mtr, kmb, citybus, gmb, mtrBus, tmr}
   mtrCodeMap: null,  // code -> 中文站名
   location: null,    // {lat, lon, label}
   locationError: null, // 定位失敗時的人話提示
@@ -121,6 +123,8 @@ function nearby() {
     mtr: findNearest(state.data.mtr, lat, lon, Math.max(r, MTR_MIN_RADIUS), 2),
     kmb: findNearest(state.data.kmb, lat, lon, r, MAX_STOPS),
     citybus: findNearest(state.data.citybus, lat, lon, r, MAX_STOPS),
+    gmb: findNearest(state.data.gmb, lat, lon, r, MAX_STOPS),
+    mtrBus: findNearest(state.data.mtrBus.stops, lat, lon, r, MAX_STOPS),
   };
 }
 
@@ -162,6 +166,71 @@ async function fetchCitybusEtasForStop(stop) {
     10
   );
   return keys.map((rt, i) => ({ rt, eta: results[i] || [] }));
+}
+
+// ---------- 綠色小巴 / 港鐵巴士 ----------
+
+/** 把 [{route, dest, mins}] 依 (route, dest) 取下一班並按時間排序 */
+function groupMinibusRows(rows) {
+  const best = new Map();
+  for (const r of rows) {
+    if (r.mins === null || r.mins === undefined) continue;
+    const k = `${r.route}|${r.dest}`;
+    const cur = best.get(k);
+    if (!cur || r.mins < cur.mins) best.set(k, r);
+  }
+  return [...best.values()].sort((a, b) => a.mins - b.mins).slice(0, MAX_BUS_ROWS);
+}
+
+/** 綠色小巴 ETA：diff 為分鐘（API 直接給），fallback 用 timestamp */
+function gmbMinutes(eta) {
+  const d = Number(eta.diff);
+  if (Number.isFinite(d) && d >= 0) return Math.round(d);
+  return minutesUntil(eta.timestamp);
+}
+
+/** 綠色小巴：一站一次查回所有路線，映射 route_id → 路線編號／目的地 */
+async function fetchGmbEtasForStop(stop) {
+  const data = await fetchGmbEta(stop.id);
+  const byKey = new Map();
+  for (const r of stop.routes) {
+    byKey.set(`${r.route_id}|${r.dir}`, r);
+  }
+  const rows = [];
+  for (const e of data) {
+    const info = byKey.get(`${e.route_id}|${e.route_seq}`);
+    if (!info) continue;
+    for (const eta of e.eta || []) {
+      const mins = gmbMinutes(eta);
+      if (mins === null) continue;
+      rows.push({ route: info.route, dest: info.dest_tc || "", mins });
+    }
+  }
+  return groupMinibusRows(rows);
+}
+
+/** 港鐵巴士：依 routeName 查 ETA（POST），再對回該站的 busStopId */
+async function fetchMtrBusEtasForStop(stop) {
+  const codes = [...new Set(stop.routes.map((r) => r.route))];
+  const results = await asyncPool(codes.map((c) => () => fetchMtrBusEta(c)), 4);
+  const byCode = new Map();
+  codes.forEach((c, i) => byCode.set(c, results[i]));
+  const lineRefs = state.data.mtrBus.lineRefs || {};
+  const rows = [];
+  for (const r of stop.routes) {
+    const resp = byCode.get(r.route);
+    if (!resp || !Array.isArray(resp.busStop)) continue;
+    const bs = resp.busStop.find((b) => b.busStopId === r.stop);
+    if (!bs) continue;
+    for (const bus of bs.bus || []) {
+      const sec = parseInt(bus.arrivalTimeInSecond, 10);
+      // 108000 秒（30 小時）＝尾班已過／無資料；不顯示
+      if (Number.isNaN(sec) || sec < 0 || sec >= 108000) continue;
+      const dest = lineRefs[bus.lineRef] || r.dest_tc || "";
+      rows.push({ route: r.route, dest, mins: Math.round(sec / 60) });
+    }
+  }
+  return groupMinibusRows(rows);
 }
 
 /** 把 ETA 陣列整理成 {dest, mins} 列（依 dir+dest 取下一班，按時間排序） */
@@ -470,26 +539,14 @@ function renderBusStops(items, mode, listElId, sectionElId) {
       .then((routeResults) => {
         etaBox.innerHTML = "";
         let rowCount = 0;
-        const dead = []; // 尾班車已過／無班次的路線（灰字列出）
 
         outer:
         for (const { rt, eta } of routeResults) {
-          // 完全冇 ETA 資料（含抓取失敗）→ 用 route 條目兜底
-          if (!eta.length) {
-            dead.push({ route: rt.route, dest: rt.dest_tc || rt.dest_en || "" });
-            continue;
-          }
+          if (!eta.length) continue;
           // 同一站柱可能回傳雙方向（總站），依 dir 分組逐方向處理
           for (const d of groupByDir(eta, rt.bound || rt.dir)) {
             const rows = summarizeEta(d.entries);
-            if (!rows.length) {
-              const first = d.entries.find((e) => e.dest_tc || e.dest_en);
-              dead.push({
-                route: rt.route,
-                dest: (first && (first.dest_tc || first.dest_en)) || rt.dest_tc || rt.dest_en || "",
-              });
-              continue;
-            }
+            if (!rows.length) continue;
             const group = document.createElement("div");
             group.className = "route-group";
             let added = 0;
@@ -515,19 +572,56 @@ function renderBusStops(items, mode, listElId, sectionElId) {
           }
         }
 
-        // 尾班車已過／無班次路線，灰字列出
-        for (const d of dead) {
-          const row = document.createElement("div");
-          row.className = "eta-row closed";
-          row.innerHTML = `
-            <span class="route-badge ${badgeClass}">${esc(d.route)}</span>
-            ${d.dest ? `<span class="eta-dest">往 ${esc(d.dest)}</span>` : ""}
-            <span class="wait-closed">已收車／暫無班次</span>`;
-          etaBox.appendChild(row);
-        }
-
-        if (!rowCount && !dead.length) {
+        if (!rowCount) {
           etaBox.innerHTML = '<div class="card-sub">暫無班次或路線未營運</div>';
+        }
+      })
+      .catch(() => {
+        etaBox.innerHTML = '<div class="card-sub">載入失敗</div>';
+      });
+  }
+}
+
+/** 綠色小巴／港鐵巴士共用渲染（fetchFn 回傳 [{route,dest,mins}]） */
+function renderMinibusStops(items, mode, listElId, sectionElId, fetchFn) {
+  const list = $(listElId);
+  list.innerHTML = "";
+  if (!items.length) {
+    $(sectionElId).classList.add("hidden");
+    return;
+  }
+  $(sectionElId).classList.remove("hidden");
+
+  const badgeClass = mode === "gmb" ? "gmb-badge" : "mtrbus-badge";
+
+  for (const { item: stop, distanceM } of items) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const name = (stop.name_tc || stop.name_en).trim();
+    card.innerHTML = `
+      <div class="card-head">
+        <span class="card-name">${esc(name)}</span>
+        <span class="card-dist">${formatDistance(distanceM)}</span>
+      </div>
+      <div class="eta-list"><span class="spinner"></span></div>`;
+    const etaBox = card.querySelector(".eta-list");
+    list.appendChild(card);
+
+    fetchFn(stop)
+      .then((rows) => {
+        etaBox.innerHTML = "";
+        if (!rows.length) {
+          etaBox.innerHTML = '<div class="card-sub">暫無班次或路線未營運</div>';
+          return;
+        }
+        for (const r of rows) {
+          const row = document.createElement("div");
+          row.className = "eta-row";
+          row.innerHTML = `
+            <span class="route-badge ${badgeClass}">${esc(r.route)}</span>
+            ${r.dest ? `<span class="eta-dest">往 ${esc(r.dest)}</span>` : ""}
+            <span class="eta-time ${timeClass(r.mins)}">${timeText(r.mins)}</span>`;
+          etaBox.appendChild(row);
         }
       })
       .catch(() => {
@@ -542,8 +636,10 @@ function renderAll() {
   renderMtr(n.mtr);
   renderBusStops(n.kmb, "kmb", "kmb-list", "kmb-section");
   renderBusStops(n.citybus, "ctb", "ctb-list", "citybus-section");
+  renderMinibusStops(n.mtrBus, "mtrbus", "mtr-bus-list", "mtr-bus-section", fetchMtrBusEtasForStop);
+  renderMinibusStops(n.gmb, "gmb", "gmb-list", "gmb-section", fetchGmbEtasForStop);
 
-  const total = n.mtr.length + n.kmb.length + n.citybus.length;
+  const total = n.mtr.length + n.kmb.length + n.citybus.length + n.mtrBus.length + n.gmb.length;
   $("empty").classList.toggle("hidden", total > 0);
 }
 

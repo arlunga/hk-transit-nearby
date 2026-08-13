@@ -8,6 +8,8 @@ const SOURCES = {
   mtr: { url: "src/data/mtr-stations.json", list: (d) => d.stations },
   kmb: { url: "src/data/kmb-stops.json", list: (d) => d.stops },
   citybus: { url: "src/data/citybus-stops.json", list: (d) => d.stops },
+  gmb: { url: "src/data/gmb-stops.json", list: (d) => d.stops },
+  mtrBus: { url: "src/data/mtr-bus-stops.json", list: (d) => d },
   tmr: { url: "src/data/tmr-interchange.json", list: (d) => d },
 };
 
@@ -27,19 +29,23 @@ async function cachedJson(key, url, force) {
 
 /**
  * 載入全部靜態資料。
- * @returns {Promise<{mtr: Array, kmb: Array, citybus: Array, tmr: Object}>}
+ * @returns {Promise<{mtr: Array, kmb: Array, citybus: Array, gmb: Array, mtrBus: Object, tmr: Object}>}
  */
 export async function loadStaticData(force = false) {
-  const [mtr, kmb, citybus, tmr] = await Promise.all([
+  const [mtr, kmb, citybus, gmb, mtrBus, tmr] = await Promise.all([
     cachedJson("data:mtr", SOURCES.mtr.url, force),
     cachedJson("data:kmb", SOURCES.kmb.url, force),
     cachedJson("data:citybus", SOURCES.citybus.url, force),
+    cachedJson("data:gmb", SOURCES.gmb.url, force),
+    cachedJson("data:mtrBus", SOURCES.mtrBus.url, force),
     cachedJson("data:tmr", SOURCES.tmr.url, force),
   ]);
   return {
     mtr: SOURCES.mtr.list(mtr),
     kmb: SOURCES.kmb.list(kmb),
     citybus: SOURCES.citybus.list(citybus),
+    gmb: SOURCES.gmb.list(gmb),
+    mtrBus: SOURCES.mtrBus.list(mtrBus), // {stops, lineRefs}
     tmr: SOURCES.tmr.list(tmr),
   };
 }

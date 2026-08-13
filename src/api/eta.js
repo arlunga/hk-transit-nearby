@@ -1,14 +1,16 @@
-// 即時到站 API（港鐵 / 九巴 / 城巴）
+// 即時到站 API（港鐵 / 九巴 / 城巴 / 綠色小巴 / 港鐵巴士）
 
 const KMB_BASE = "https://data.etabus.gov.hk/v1/transport/kmb";
 const CTB_BASE = "https://rt.data.gov.hk/v2/transport/citybus";
 const MTR_BASE = "https://rt.data.gov.hk/v1/transport/mtr";
+const GMB_BASE = "https://data.etagmb.gov.hk";
+const MTR_BUS_BASE = "https://rt.data.gov.hk/v1/transport/mtr/bus";
 
-async function fetchJson(url, timeoutMs = 15000) {
+async function fetchJson(url, timeoutMs = 15000, options = {}) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { signal: ctrl.signal });
+    const res = await fetch(url, { signal: ctrl.signal, ...options });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } finally {
@@ -42,6 +44,25 @@ export async function fetchMtrSchedule(line, station) {
   if (d.status !== 1 || !d.data) return { UP: [], DOWN: [] };
   const key = Object.keys(d.data)[0];
   return d.data[key] || { UP: [], DOWN: [] };
+}
+
+/** 綠色小巴到站（回傳 data 陣列，每項含 route_id/route_seq/eta:[{diff,timestamp,remarks_tc}]） */
+export async function fetchGmbEta(stopId) {
+  const d = await fetchJson(`${GMB_BASE}/eta/stop/${stopId}`);
+  return d.data || [];
+}
+
+/** 港鐵巴士到站（POST routeName，回傳 {busStop:[{busStopId,bus:[{lineRef,arrivalTimeInSecond}]}]}） */
+export async function fetchMtrBusEta(routeName) {
+  return fetchJson(
+    `${MTR_BUS_BASE}/getSchedule`,
+    15000,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language: "zh", routeName }),
+    }
+  );
 }
 
 /**

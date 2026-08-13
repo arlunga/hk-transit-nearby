@@ -9,6 +9,8 @@
   --mtr: #1a6fb5;
   --kmb: #d32f2f;
   --ctb: #e8a33d;
+  --gmb: #16a34a;
+  --mtrbus: #0e7490;
   --radius: 14px;
   --shadow: 0 1px 3px rgba(16, 24, 40, 0.08);
 }
@@ -76,6 +78,8 @@ main { max-width: 680px; margin: 12px auto 40px; padding: 0 20px; }
 .mtr-dot { background: var(--mtr); }
 .kmb-dot { background: var(--kmb); }
 .ctb-dot { background: var(--ctb); }
+.gmb-dot { background: var(--gmb); }
+.mtrbus-dot { background: var(--mtrbus); }
 
 .list { display: flex; flex-direction: column; gap: 8px; }
 
@@ -99,6 +103,8 @@ main { max-width: 680px; margin: 12px auto 40px; padding: 0 20px; }
 .kmb-badge { background: var(--kmb); }
 .ctb-badge { background: var(--ctb); color: #3a2a00; }
 .mtr-badge { background: var(--mtr); }
+.gmb-badge { background: var(--gmb); }
+.mtrbus-badge { background: var(--mtrbus); }
 
 .eta-dest { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .eta-time { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
