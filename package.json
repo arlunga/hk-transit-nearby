@@ -1,0 +1,10 @@
+{
+  "name": "hk-transit-nearby",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "顯示附近港鐵/九巴/城巴即時到站時間的純前端網頁",
+  "scripts": {
+    "serve": "python3 -m http.server 8000"
+  }
+}

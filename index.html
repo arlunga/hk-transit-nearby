@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>附近到站 · 港鐵巴士即時</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>附近到站</h1>
+    <p class="subtitle" id="loc-status">載入中…</p>
+  </header>
+
+  <div class="controls">
+    <div class="control-row">
+      <label for="radius">範圍</label>
+      <select id="radius">
+        <option value="400">400 米</option>
+        <option value="600" selected>600 米</option>
+        <option value="1000">1 公里</option>
+        <option value="2000">2 公里</option>
+      </select>
+      <button id="btn-locate" class="btn" title="使用目前位置">📍 目前位置</button>
+      <button id="btn-home" class="btn" title="儲存目前位置為我家">🏠 設為我家</button>
+      <button id="btn-settings" class="btn" title="手動輸入座標">⚙️ 設定位置</button>
+      <button id="btn-refresh" class="btn btn-primary">🔄 更新</button>
+    </div>
+    <div class="control-row meta" id="meta-row">
+      <span id="last-updated"></span>
+    </div>
+  </div>
+
+  <div id="location-panel" class="panel hidden">
+    <h2>設定位置</h2>
+    <p class="hint">可輸入經緯度，或先按「📍 目前位置」取得座標再「🏠 設為我家」。</p>
+    <div class="coord-inputs">
+      <label>緯度 lat <input type="number" id="lat-input" step="0.000001" placeholder="22.30" /></label>
+      <label>經度 lon <input type="number" id="lon-input" step="0.000001" placeholder="114.17" /></label>
+    </div>
+    <div class="coord-actions">
+      <button id="btn-apply-coord" class="btn btn-primary">套用座標</button>
+      <button id="btn-clear-home" class="btn">清除我家</button>
+    </div>
+  </div>
+
+  <main id="content">
+    <section id="mtr-section" class="section hidden">
+      <h2><span class="dot mtr-dot"></span>港鐵</h2>
+      <div class="list" id="mtr-list"></div>
+    </section>
+    <section id="kmb-section" class="section hidden">
+      <h2><span class="dot kmb-dot"></span>九巴</h2>
+      <div class="list" id="kmb-list"></div>
+    </section>
+    <section id="citybus-section" class="section hidden">
+      <h2><span class="dot ctb-dot"></span>城巴</h2>
+      <div class="list" id="ctb-list"></div>
+    </section>
+    <div id="empty" class="empty hidden">附近沒有找到站點，試試加大範圍。</div>
+  </main>
+
+  <footer class="app-footer">
+    <p>資料來源：<a href="https://data.gov.hk" target="_blank" rel="noopener">資料一線通 data.gov.hk</a>（港鐵／九巴／城巴）</p>
+    <button id="btn-reload-data" class="linklike">更新站點資料</button>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
