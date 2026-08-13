@@ -28,7 +28,12 @@ def main():
     # 兩階段：先無後綴主站設預設值，再讓月台站覆寫（平台站優先）
     # 每個 route 存 {stop, service_type}；service_type 優先取 1（一般班次）
     def info(r):
-        return {"stop": r["stop"], "service_type": int(r.get("service_type", 1) or 1)}
+        return {
+            "stop": r["stop"],
+            "service_type": int(r.get("service_type", 1) or 1),
+            "seq": int(r.get("seq", 0) or 0),
+            "dest_tc": r.get("dest_tc", ""),
+        }
 
     stops = {"O": {}, "I": {}}
     for s in interchange:

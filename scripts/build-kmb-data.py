@@ -4,8 +4,8 @@
 九巴有完整站表與 route-stop 端點，各一次抓取後反轉成「站點 → 路線」索引。
 再把「同名 + 50 米內」的多個 stop ID 合併成一個站（九巴會把同一站拆成多個站柱）。
 
-產出：每個站點 {id, name_tc, name_en, lat, lon, routes:[{route, bound, service_type, dest_tc, stop}]}
-  route.stop = 該路線實際查 ETA 用的 stop ID。
+產出：每個站點 {id, name_tc, name_en, lat, lon, routes:[{route, bound, service_type, dest_tc, stop, seq}]}
+  route.stop = 該路線實際查 ETA 用的 stop ID；route.seq = 該站於路線中的站序。
 
 用法：python3 scripts/build-kmb-data.py
 """
@@ -81,6 +81,7 @@ def main():
             "bound": rs["bound"],
             "service_type": rs["service_type"],
             "dest_tc": dest.get(key, ""),
+            "seq": int(rs["seq"]),
         })
 
     raw = []

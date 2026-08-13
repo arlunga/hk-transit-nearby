@@ -24,6 +24,7 @@ const state = {
   data: null,        // {mtr, kmb, citybus}
   mtrCodeMap: null,  // code -> 中文站名
   location: null,    // {lat, lon, label}
+  locationError: null, // 定位失敗時的人話提示
   radius: 600,
   timer: null,
 };
@@ -65,16 +66,37 @@ function geolocate() {
   });
 }
 
+/** 把定位錯誤碼轉成清楚的提示，讓用戶知道去開手機定位／授權 */
+function geoErrorText(err) {
+  if (!navigator.geolocation) {
+    return "此瀏覽器不支援定位 — 請用系統瀏覽器開啟，或「⚙️ 設定位置」手動輸入";
+  }
+  switch (err && err.code) {
+    case 1: // PERMISSION_DENIED
+      return "瀏覽器封鎖了定位（常見於 app 內建瀏覽器或曾按「拒絕」）— 請用系統瀏覽器開啟並允許，或「⚙️ 設定位置」手動輸入";
+    case 2: // POSITION_UNAVAILABLE
+      return "抓不到位置 — 請確認手機已開「定位服務／GPS」，再點「📍 目前位置」重試";
+    case 3: // TIMEOUT
+      return "定位逾時 — 請確認已開定位，再點「📍 目前位置」重試";
+    default:
+      return "無法定位 — 點「📍 目前位置」重試，或「⚙️ 設定位置」手動輸入";
+  }
+}
+
 async function determineLocation() {
   const home = getHome();
   if (home) {
     state.location = { ...home, label: "🏠 我家" };
+    state.locationError = null;
     return;
   }
   try {
     state.location = await geolocate();
-  } catch {
+    state.locationError = null;
+  } catch (err) {
     state.location = null;
+    state.locationError = geoErrorText(err);
+    setStatus(state.locationError);
   }
 }
 
@@ -205,6 +227,7 @@ async function computeTmrTransfer(route, bound, etaEntries) {
   const transfers = [];
   for (const item of results) {
     if (!item) continue;
+    const info = dirInfo.stops[item.route];
     const next = item.etas
       .map((e) => ({ t: new Date(e.eta).getTime(), dest: e.dest_tc || e.dest_en || "" }))
       .filter((x) => !Number.isNaN(x.t))
@@ -216,10 +239,29 @@ async function computeTmrTransfer(route, bound, etaEntries) {
         dest: next.dest,
         wait: Math.max(0, Math.round((next.t - myArrive) / 60000)),
       });
+    } else {
+      // 無下一班（尾班車已過等）→ 仍列出，標示「已收車」
+      transfers.push({ route: item.route, dest: info?.dest_tc || "", wait: null });
     }
   }
-  transfers.sort((a, b) => a.wait - b.wait);
+  transfers.sort((a, b) => {
+    if (a.wait === null && b.wait === null) return a.route.localeCompare(b.route, undefined, { numeric: true });
+    if (a.wait === null) return 1;
+    if (b.wait === null) return -1;
+    return a.wait - b.wait;
+  });
   return { label: dirInfo.label, transfers };
+}
+
+/** 判斷轉車站是否在自家站下游（仍未經過）：以路線站序 seq 比較，免額外 API 呼叫 */
+function transferAhead(route, bound, etaEntries) {
+  const info = state.data?.tmr?.directions?.[bound]?.stops?.[route];
+  if (!info) return false;
+  const homeSeq = Number(etaEntries?.[0]?.seq);
+  const transferSeq = Number(info.seq);
+  // 判斷不到時仍顯示，交由點擊後的實際 ETA 比對把關
+  if (!Number.isFinite(homeSeq) || !Number.isFinite(transferSeq)) return true;
+  return transferSeq > homeSeq;
 }
 
 /** 為某路線加「🚏 轉乘」按鈕與惰性載入的完整轉乘列表 */
@@ -284,11 +326,18 @@ function renderTransferList(box, res) {
   }
   for (const t of res.transfers) {
     const line = document.createElement("div");
-    line.className = "transfer-row";
-    line.innerHTML = `
-      <span class="route-badge kmb-badge">${esc(t.route)}</span>
-      ${t.dest ? `<span class="eta-dest">往 ${esc(t.dest)}</span>` : ""}
-      <span class="eta-time ${timeClass(t.wait)}">${timeText(t.wait)}</span>`;
+    line.className = "transfer-row" + (t.wait === null ? " closed" : "");
+    if (t.wait === null) {
+      line.innerHTML = `
+        <span class="route-badge kmb-badge">${esc(t.route)}</span>
+        ${t.dest ? `<span class="eta-dest">往 ${esc(t.dest)}</span>` : ""}
+        <span class="wait-closed">已收車／無班次</span>`;
+    } else {
+      line.innerHTML = `
+        <span class="route-badge kmb-badge">${esc(t.route)}</span>
+        ${t.dest ? `<span class="eta-dest">往 ${esc(t.dest)}</span>` : ""}
+        <span class="eta-time ${timeClass(t.wait)}">${timeText(t.wait)}</span>`;
+    }
     box.appendChild(line);
   }
 }
@@ -435,8 +484,8 @@ function renderBusStops(items, mode, listElId, sectionElId) {
           if (added === 0) break; // 已達每站列數上限
           etaBox.appendChild(group);
 
-          // 九巴路線若經屯門公路轉車站，附轉乘按鈕
-          if (mode === "kmb" && state.data?.tmr?.directions?.[rt.bound]?.stops?.[rt.route]) {
+          // 九巴路線若經屯門公路轉車站且轉車站在下游（尚未經過），附轉乘按鈕
+          if (mode === "kmb" && transferAhead(rt.route, rt.bound, eta)) {
             addTransferToggle(group, rt.route, rt.bound, eta);
           }
         }
@@ -465,7 +514,7 @@ function updateStatus() {
   setStatus(
     state.location
       ? `${getLocationLabel(state.location)} · 範圍 ${state.radius} 米`
-      : "無法定位，請按「⚙️ 設定位置」輸入座標"
+      : (state.locationError || "無法定位 — 點「📍 目前位置」或「⚙️ 設定位置」手動輸入")
   );
 }
 
@@ -490,10 +539,13 @@ function bindControls() {
     setStatus("定位中…");
     try {
       state.location = await geolocate();
+      state.locationError = null;
       removeSetting("home");
       await refresh();
-    } catch {
-      setStatus("定位失敗，請在「設定位置」輸入座標");
+    } catch (err) {
+      state.location = null;
+      state.locationError = geoErrorText(err);
+      setStatus(state.locationError);
       $("location-panel").classList.remove("hidden");
     }
   });
@@ -502,8 +554,9 @@ function bindControls() {
     if (!state.location) {
       try {
         state.location = await geolocate();
-      } catch {
-        setStatus("無法取得位置，無法設為我家");
+        state.locationError = null;
+      } catch (err) {
+        setStatus(geoErrorText(err));
         $("location-panel").classList.remove("hidden");
         return;
       }
@@ -555,14 +608,15 @@ async function init() {
     $("location-panel").classList.toggle("hidden")
   );
 
+  // 定位先跑（讓權限提示盡早跳出），與載入站點資料並行
+  const locationPromise = determineLocation();
   try {
     await loadData();
   } catch (e) {
     setStatus(`站點資料載入失敗：${e.message}`);
     return;
   }
-  setStatus("定位中…");
-  await determineLocation();
+  await locationPromise;
   refresh();
   state.timer = setInterval(refresh, REFRESH_MS);
 }

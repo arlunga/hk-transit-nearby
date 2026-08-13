@@ -120,6 +120,8 @@ main { max-width: 680px; margin: 12px auto 40px; padding: 0 20px; }
 }
 .transfer-head { font-size: 12px; color: var(--muted); font-weight: 600; }
 .transfer-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.transfer-row.closed { opacity: 0.55; }
+.transfer-row .wait-closed { color: var(--muted); font-weight: 500; white-space: nowrap; }
 
 .mtr-line-group { margin-top: 8px; }
 .mtr-line-title { font-size: 13px; color: var(--muted); font-weight: 600; }
