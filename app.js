@@ -490,29 +490,51 @@ function bareStopName(name) {
  * stops = [{seq, name, cum}]；cum 為由總站起計的估算行車分鐘（僅靜態 fallback 用）。
  */
 async function renderRouteList(box, stops, currentName, liveInfo = null) {
-  paintRouteList(box, stops, currentName, null);
+  paintRouteList(box, stops, currentName, null, null);
   if (!liveInfo) return;
 
   try {
     const data = await fetchKmbRouteEta(liveInfo.route, liveInfo.serviceType);
     // 追蹤「同一班車」（eta_seq）沿途各站的到站時間；
     // 只取即時預測（rmk 空），排除「原定班次」以免混入其他班次／時間表造成跳動。
-    const seqTime = new Map();
+    const tracked = new Map(); // seq -> ms（追蹤巴士即時）
     for (const e of data) {
       if (e.dir !== liveInfo.dir) continue;
       if (e.eta_seq !== liveInfo.etaSeq) continue;
       if (e.rmk_tc) continue;
       const t = new Date(e.eta).getTime();
       if (Number.isNaN(t)) continue;
-      seqTime.set(e.seq, t);
+      tracked.set(e.seq, t);
     }
-    paintRouteList(box, stops, currentName, seqTime);
+
+    // 即時預測可能未覆蓋到終點；用追蹤巴士自己的「每站平均行車時間」
+    // 向後延伸（不混入其他班次，確保時間單調、反映實際車速）。
+    const etaBySeq = new Map(tracked);
+    const liveSet = new Set(tracked.keys());
+    const arr = [...tracked.entries()].sort((a, b) => a[0] - b[0]);
+    if (arr.length >= 2) {
+      const first = arr[0];
+      const last = arr[arr.length - 1];
+      const spanSeq = last[0] - first[0];
+      const spanTime = last[1] - first[1];
+      if (spanSeq > 0 && spanTime > 0) {
+        const perStop = spanTime / spanSeq;
+        let cursor = last[1];
+        for (const s of stops) {
+          if (s.seq <= last[0]) continue;
+          cursor += perStop;
+          etaBySeq.set(s.seq, cursor);
+        }
+      }
+    }
+
+    paintRouteList(box, stops, currentName, etaBySeq, liveSet);
   } catch {
     /* 抓取失敗就保留靜態估算 */
   }
 }
 
-function paintRouteList(box, stops, currentName, seqTime) {
+function paintRouteList(box, stops, currentName, etaBySeq, liveSet) {
   const bare = bareStopName(currentName);
   let curIdx = -1;
   if (currentName) {
@@ -535,10 +557,11 @@ function paintRouteList(box, stops, currentName, seqTime) {
     } else if (curIdx >= 0 && i < curIdx) {
       li.className = "passed";
       tag = '<span class="route-stop-tag">已過</span>';
-    } else if (seqTime && seqTime.has(s.seq)) {
-      // 即時：下一班到該站還有幾多分鐘
-      const mins = Math.max(0, Math.round((seqTime.get(s.seq) - Date.now()) / 60000));
-      tag = `<span class="route-stop-tag">${timeText(mins)}</span>`;
+    } else if (etaBySeq && etaBySeq.has(s.seq)) {
+      // 即時（追蹤巴士）或依其車速延伸；延伸者加「約」作區分
+      const mins = Math.max(0, Math.round((etaBySeq.get(s.seq) - Date.now()) / 60000));
+      const approx = liveSet && liveSet.has(s.seq) ? "" : "約 ";
+      tag = `<span class="route-stop-tag">${approx}${timeText(mins)}</span>`;
     } else if (curIdx >= 0) {
       // 靜態 fallback：依站間距離估算
       const mins = Math.max(1, Math.round(s.cum - curCum));
