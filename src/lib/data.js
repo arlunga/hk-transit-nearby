@@ -78,7 +78,7 @@ function cumulativeMinutes(items) {
       const prev = items[i - 1];
       cum += haversineMeters(prev.lat, prev.lon, it.lat, it.lon) / SPEED_M_PER_MIN + DWELL_MIN;
     }
-    return { name: it.name, cum };
+    return { seq: it.seq, name: it.name, cum };
   });
 }
 
@@ -111,7 +111,7 @@ export function buildRouteStops(data) {
   const kmb = {};
   for (const [rk, [, arr]] of kmbBest) {
     arr.sort((a, b) => a[0] - b[0]);
-    kmb[rk] = cumulativeMinutes(arr.map((x) => ({ name: x[1], lat: x[2], lon: x[3] })));
+    kmb[rk] = cumulativeMinutes(arr.map((x) => ({ seq: x[0], name: x[1], lat: x[2], lon: x[3] })));
   }
 
   // 城巴／綠色小巴／港鐵巴士：依 key 分組、依 seq 排序。
@@ -130,7 +130,7 @@ export function buildRouteStops(data) {
     const out = {};
     for (const [k, arr] of groups) {
       arr.sort((a, b) => a[0] - b[0]);
-      out[k] = cumulativeMinutes(arr.map((x) => ({ name: x[1], lat: x[2], lon: x[3] })));
+      out[k] = cumulativeMinutes(arr.map((x) => ({ seq: x[0], name: x[1], lat: x[2], lon: x[3] })));
     }
     return out;
   };

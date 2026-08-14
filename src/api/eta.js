@@ -32,6 +32,12 @@ export async function fetchKmbEta(stop, route, serviceType) {
   return d.data || [];
 }
 
+/** 九巴路線沿途到站（回傳 data 陣列，每項含 seq/eta_seq/eta/dir/dest_tc） */
+export async function fetchKmbRouteEta(route, serviceType) {
+  const d = await fetchJson(`${KMB_BASE}/route-eta/${route}/${serviceType}`);
+  return d.data || [];
+}
+
 /** 城巴到站 */
 export async function fetchCitybusEta(stop, route) {
   const d = await fetchJson(`${CTB_BASE}/eta/CTB/${stop}/${route}`);

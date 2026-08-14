@@ -3,6 +3,7 @@ import { findNearest, formatDistance } from "./src/lib/geo.js";
 import { getSetting, setSetting, removeSetting, clearAllData } from "./src/lib/store.js";
 import {
   fetchKmbEta,
+  fetchKmbRouteEta,
   fetchCitybusEta,
   fetchMtrSchedule,
   fetchGmbEta,
@@ -445,8 +446,12 @@ function renderTransferList(box, res, route) {
   }
 }
 
-/** 為某路線加「🗺️ 路線」按鈕，點擊展開完整途經站（純靜態，無 API 呼叫） */
-function addRouteToggle(container, mode, key, currentName) {
+/**
+ * 為某路線加「🗺️ 路線」按鈕，點擊展開完整途經站。
+ * liveInfo（僅九巴）：{route, dir, serviceType}，開啟時抓沿途即時到站覆蓋各站時間；
+ * 其他模式為 null，只用靜態距離估算。
+ */
+function addRouteToggle(container, mode, key, currentName, liveInfo = null) {
   const stops = state.routeStops?.[mode]?.[key];
   if (!stops || !stops.length) return;
 
@@ -467,7 +472,7 @@ function addRouteToggle(container, mode, key, currentName) {
     if (opened) {
       btn.textContent = "🗺️ 收起路線";
       box.classList.remove("hidden");
-      renderRouteList(box, stops, currentName);
+      renderRouteList(box, stops, currentName, liveInfo);
     } else {
       btn.textContent = "🗺️ 路線";
       box.classList.add("hidden");
@@ -480,8 +485,31 @@ function bareStopName(name) {
   return String(name || "").replace(/\s*\([A-Z]{2}\d+\)\s*$/, "").trim();
 }
 
-function renderRouteList(box, stops, currentName) {
-  // stops = [{name, cum}]；cum 為由總站起計的估算行車分鐘
+/**
+ * 渲染路線途經站。liveInfo（九巴）時先畫靜態，再抓沿途即時到站覆蓋各站時間。
+ * stops = [{seq, name, cum}]；cum 為由總站起計的估算行車分鐘（僅靜態 fallback 用）。
+ */
+async function renderRouteList(box, stops, currentName, liveInfo = null) {
+  paintRouteList(box, stops, currentName, null);
+  if (!liveInfo) return;
+
+  try {
+    const data = await fetchKmbRouteEta(liveInfo.route, liveInfo.serviceType);
+    // 每站取「下一班」（最早到達）的時間
+    const seqTime = new Map();
+    for (const e of data) {
+      if (e.dir !== liveInfo.dir) continue;
+      const t = new Date(e.eta).getTime();
+      if (Number.isNaN(t)) continue;
+      if (!seqTime.has(e.seq) || t < seqTime.get(e.seq)) seqTime.set(e.seq, t);
+    }
+    paintRouteList(box, stops, currentName, seqTime);
+  } catch {
+    /* 抓取失敗就保留靜態估算 */
+  }
+}
+
+function paintRouteList(box, stops, currentName, seqTime) {
   const bare = bareStopName(currentName);
   let curIdx = -1;
   if (currentName) {
@@ -504,7 +532,12 @@ function renderRouteList(box, stops, currentName) {
     } else if (curIdx >= 0 && i < curIdx) {
       li.className = "passed";
       tag = '<span class="route-stop-tag">已過</span>';
+    } else if (seqTime && seqTime.has(s.seq)) {
+      // 即時：下一班到該站還有幾多分鐘
+      const mins = Math.max(0, Math.round((seqTime.get(s.seq) - Date.now()) / 60000));
+      tag = `<span class="route-stop-tag">${timeText(mins)}</span>`;
     } else if (curIdx >= 0) {
+      // 靜態 fallback：依站間距離估算
       const mins = Math.max(1, Math.round(s.cum - curCum));
       tag = `<span class="route-stop-tag">約 ${mins} 分鐘</span>`;
     }
@@ -670,8 +703,11 @@ function renderBusStops(items, mode, listElId, sectionElId) {
             if (added === 0) break outer; // 已達每站列數上限
             etaBox.appendChild(group);
 
-            // 顯示完整途經站
-            addRouteToggle(group, mode, `${rt.route}|${d.dir}`, stop.name_tc);
+            // 顯示完整途經站（九巴附沿途即時到站，其餘用靜態估算）
+            const liveInfo = mode === "kmb"
+              ? { route: rt.route, dir: d.dir, serviceType: rt.service_type }
+              : null;
+            addRouteToggle(group, mode, `${rt.route}|${d.dir}`, stop.name_tc, liveInfo);
 
             // 九巴路線若經屯門公路轉車站且轉車站在下游（尚未經過），附轉乘按鈕
             if (mode === "kmb" && transferAhead(rt.route, d.dir, d.entries)) {
