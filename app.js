@@ -448,7 +448,7 @@ function renderTransferList(box, res, route) {
 
 /**
  * 為某路線加「🗺️ 路線」按鈕，點擊展開完整途經站。
- * liveInfo（僅九巴）：{route, dir, serviceType}，開啟時抓沿途即時到站覆蓋各站時間；
+ * liveInfo（僅九巴）：{route, dir, serviceType, etaSeq}，開啟時追蹤同一班車沿途即時到站；
  * 其他模式為 null，只用靜態距離估算。
  */
 function addRouteToggle(container, mode, key, currentName, liveInfo = null) {
@@ -495,13 +495,16 @@ async function renderRouteList(box, stops, currentName, liveInfo = null) {
 
   try {
     const data = await fetchKmbRouteEta(liveInfo.route, liveInfo.serviceType);
-    // 每站取「下一班」（最早到達）的時間
+    // 追蹤「同一班車」（eta_seq）沿途各站的到站時間；
+    // 只取即時預測（rmk 空），排除「原定班次」以免混入其他班次／時間表造成跳動。
     const seqTime = new Map();
     for (const e of data) {
       if (e.dir !== liveInfo.dir) continue;
+      if (e.eta_seq !== liveInfo.etaSeq) continue;
+      if (e.rmk_tc) continue;
       const t = new Date(e.eta).getTime();
       if (Number.isNaN(t)) continue;
-      if (!seqTime.has(e.seq) || t < seqTime.get(e.seq)) seqTime.set(e.seq, t);
+      seqTime.set(e.seq, t);
     }
     paintRouteList(box, stops, currentName, seqTime);
   } catch {
@@ -703,10 +706,19 @@ function renderBusStops(items, mode, listElId, sectionElId) {
             if (added === 0) break outer; // 已達每站列數上限
             etaBox.appendChild(group);
 
-            // 顯示完整途經站（九巴附沿途即時到站，其餘用靜態估算）
-            const liveInfo = mode === "kmb"
-              ? { route: rt.route, dir: d.dir, serviceType: rt.service_type }
-              : null;
+            // 顯示完整途經站（九巴追蹤同一班車沿途即時到站，其餘用靜態估算）
+            let liveInfo = null;
+            if (mode === "kmb") {
+              let nextBus = null;
+              for (const e of d.entries) {
+                const t = new Date(e.eta).getTime();
+                if (Number.isNaN(t) || t < Date.now()) continue;
+                if (!nextBus || t < new Date(nextBus.eta).getTime()) nextBus = e;
+              }
+              if (nextBus && nextBus.eta_seq !== undefined) {
+                liveInfo = { route: rt.route, dir: d.dir, serviceType: rt.service_type, etaSeq: nextBus.eta_seq };
+              }
+            }
             addRouteToggle(group, mode, `${rt.route}|${d.dir}`, stop.name_tc, liveInfo);
 
             // 九巴路線若經屯門公路轉車站且轉車站在下游（尚未經過），附轉乘按鈕
