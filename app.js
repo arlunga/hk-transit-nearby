@@ -1,6 +1,6 @@
 import { loadStaticData, buildMtrCodeMap, buildRouteStops } from "./src/lib/data.js";
 import { findNearest, formatDistance } from "./src/lib/geo.js";
-import { getSetting, setSetting, removeSetting } from "./src/lib/store.js";
+import { getSetting, setSetting, removeSetting, clearAllData } from "./src/lib/store.js";
 import {
   fetchKmbEta,
   fetchCitybusEta,
@@ -843,6 +843,13 @@ function bindControls() {
     setStatus("重新下載站點資料…");
     await loadData(true);
     await refresh();
+  });
+
+  // 一鍵清除本地資料（localStorage 設定 + IndexedDB 站點快取），清完重載頁面
+  $("btn-clear-data").addEventListener("click", async () => {
+    if (!confirm("確定清除所有本地資料？\n會刪除「我家」位置、範圍設定及站點快取。")) return;
+    await clearAllData();
+    location.reload();
   });
 }
 

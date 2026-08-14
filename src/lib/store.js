@@ -99,3 +99,25 @@ export function removeSetting(key) {
     /* ignore */
   }
 }
+
+/** 清除所有本地資料：localStorage 設定 + IndexedDB 站點快取 */
+export async function clearAllData() {
+  try {
+    localStorage.clear();
+  } catch {
+    /* ignore */
+  }
+  const db = await openDb();
+  if (db) {
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE, "readwrite");
+        const req = tx.objectStore(STORE).clear();
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  }
+}

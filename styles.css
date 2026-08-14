@@ -187,6 +187,7 @@ main { max-width: 680px; margin: 12px auto 40px; padding: 0 20px; }
 }
 .app-footer a { color: var(--primary); text-decoration: none; }
 .linklike { background: none; border: none; color: var(--primary); cursor: pointer; font-size: 12px; padding: 0; }
+.footer-actions { display: flex; gap: 16px; margin-top: 2px; }
 
 .spinner {
   width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--primary);
