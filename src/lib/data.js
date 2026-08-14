@@ -1,6 +1,7 @@
 // 靜態站點資料載入 + 快取（IndexedDB，7 天有效）
 
 import { kvGet, kvSet } from "./store.js";
+import { haversineMeters } from "./geo.js";
 
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
 
@@ -60,11 +61,27 @@ export function buildMtrCodeMap(mtrStations) {
 }
 
 /**
- * 建立「路線 × 方向 → 依序停站名」對照（供「🗺️ 路線」按鈕顯示完整途經站）。
+ * 建立「路線 × 方向 → 依序停站（含累計行車時間）」對照（供「🗺️ 路線」按鈕顯示完整途經站）。
  * 直接從已載入的站點資料反轉，無需額外資料檔。
+ * 每站附 cum = 由總站起計的估算行車分鐘（依站間距離 + 平均車速推算，僅供參考）。
  * @param {{kmb:Array, citybus:Array, gmb:Array, mtrBus:Object}} data
- * @returns {{kmb:Object, ctb:Object, gmb:Object, mtrbus:Object}}
+ * @returns {{kmb:Object, ctb:Object, gmb:Object, mtrbus:Object}} 值為 [{name, cum}]
  */
+const SPEED_M_PER_MIN = 300; // 平均車速約 18 km/h
+const DWELL_MIN = 0.4;       // 每站停靠時間（分鐘）
+
+/** 依 seq 排序好的站點（含座標）→ [{name, cum}]，cum 為累計分鐘 */
+function cumulativeMinutes(items) {
+  let cum = 0;
+  return items.map((it, i) => {
+    if (i > 0) {
+      const prev = items[i - 1];
+      cum += haversineMeters(prev.lat, prev.lon, it.lat, it.lon) / SPEED_M_PER_MIN + DWELL_MIN;
+    }
+    return { name: it.name, cum };
+  });
+}
+
 export function buildRouteStops(data) {
   // KMB：service_type 代表不同服務時段／特別班次（停站可能不同），
   // 每個 (route, bound) 取「停站最多」的 service_type（主路線／最完整走線）。
@@ -74,7 +91,7 @@ export function buildRouteStops(data) {
       const k = `${r.route}|${r.bound}|${r.service_type}`;
       let arr = kmbGroups.get(k);
       if (!arr) { arr = []; kmbGroups.set(k, arr); }
-      arr.push([r.seq || 0, s.name_tc]);
+      arr.push([r.seq || 0, s.name_tc, s.lat, s.lon]);
     }
   }
   const kmbBest = new Map(); // route|bound -> [service_type, arr]
@@ -94,32 +111,35 @@ export function buildRouteStops(data) {
   const kmb = {};
   for (const [rk, [, arr]] of kmbBest) {
     arr.sort((a, b) => a[0] - b[0]);
-    kmb[rk] = arr.map((x) => x[1]);
+    kmb[rk] = cumulativeMinutes(arr.map((x) => ({ name: x[1], lat: x[2], lon: x[3] })));
   }
 
-  // 城巴／綠色小巴／港鐵巴士：依 (route, dir) 分組、依 seq 排序
-  const simple = (stops) => {
+  // 城巴／綠色小巴／港鐵巴士：依 key 分組、依 seq 排序。
+  // 綠色小巴路線編號（route）跨區重複（如「44」在新界與九龍是不同路線），
+  // 故須用 route_id 做 key，避免把同名不同線的站合併。
+  const simple = (stops, keyOf) => {
     const groups = new Map();
     for (const s of stops) {
       for (const r of s.routes || []) {
-        const k = `${r.route}|${r.dir}`;
+        const k = keyOf(r);
         let arr = groups.get(k);
         if (!arr) { arr = []; groups.set(k, arr); }
-        arr.push([r.seq || 0, s.name_tc]);
+        arr.push([r.seq || 0, s.name_tc, s.lat, s.lon]);
       }
     }
     const out = {};
     for (const [k, arr] of groups) {
       arr.sort((a, b) => a[0] - b[0]);
-      out[k] = arr.map((x) => x[1]);
+      out[k] = cumulativeMinutes(arr.map((x) => ({ name: x[1], lat: x[2], lon: x[3] })));
     }
     return out;
   };
 
+  const routeDir = (r) => `${r.route}|${r.dir}`;
   return {
     kmb,
-    ctb: simple(data.citybus),
-    gmb: simple(data.gmb),
-    mtrbus: simple(data.mtrBus.stops),
+    ctb: simple(data.citybus, routeDir),
+    gmb: simple(data.gmb, (r) => `${r.route_id}|${r.dir}`),
+    mtrbus: simple(data.mtrBus.stops, routeDir),
   };
 }
