@@ -49,7 +49,9 @@ export async function fetchMtrSchedule(line, station) {
   const d = await fetchJson(`${MTR_BASE}/getSchedule.php?line=${line}&sta=${station}`);
   if (d.status !== 1 || !d.data) return { UP: [], DOWN: [] };
   const key = Object.keys(d.data)[0];
-  return d.data[key] || { UP: [], DOWN: [] };
+  const sched = d.data[key] || {};
+  // 總站只回傳單一方向（如屯門站只有 DOWN、冇 UP），補齊避免後續 UP/DOWN 取 .length 出錯
+  return { UP: sched.UP || [], DOWN: sched.DOWN || [] };
 }
 
 /** 綠色小巴到站（回傳 data 陣列，每項含 route_id/route_seq/eta:[{diff,timestamp,remarks_tc}]） */
